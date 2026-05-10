@@ -38,7 +38,22 @@ class IPv4:
     dst: str
 
     def __init__(self, buffer: bytes):
-        pass  # TODO
+        version_ihl = buffer[0]
+        self.version = version_ihl >> 4 # right shifting 4 bits
+        self.header_len = (version_ihl & 0x0F) * 4  # IHL field is in 4-byte words; spec requires bytes
+
+        self.tos = buffer[1]
+        self.length = int.from_bytes(buffer[2:4], "big")
+        self.id = int.from_bytes(buffer[4:6], "big")
+
+        flags_and_offset = int.from_bytes(buffer[6:8], "big")
+        self.flags = flags_and_offset >> 13
+        self.frag_offset = flags_and_offset & 0x1FFF
+
+        self.ttl, self.proto = buffer[8], buffer[9]
+        self.cksum = int.from_bytes(buffer[10:12], "big")
+        self.src = util.inet_ntoa(buffer[12:16])
+        self.dst = util.inet_ntoa(buffer[16:20])
 
     def __str__(self) -> str:
         return f"IPv{self.version} (tos 0x{self.tos:x}, ttl {self.ttl}, " + \
@@ -60,7 +75,8 @@ class ICMP:
     cksum: int
 
     def __init__(self, buffer: bytes):
-        pass  # TODO
+        self.type, self.code = buffer[0:2]
+        self.cksum = int.from_bytes(buffer[2:4], "big")
 
     def __str__(self) -> str:
         return f"ICMP (type {self.type}, code {self.code}, " + \
@@ -79,7 +95,10 @@ class UDP:
     cksum: int
 
     def __init__(self, buffer: bytes):
-        pass  # TODO
+        self.src_port = int.from_bytes(buffer[0:2], "big")
+        self.dst_port = int.from_bytes(buffer[2:4], "big")
+        self.len = int.from_bytes(buffer[4:6], "big")
+        self.cksum = int.from_bytes(buffer[6:8], "big")
 
     def __str__(self) -> str:
         return f"UDP (src_port {self.src_port}, dst_port {self.dst_port}, " + \
@@ -107,10 +126,26 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
     should be included as the final element in the list.
     """
 
-    # TODO Add your implementation
+    routers: list[list[str]] = []
     for ttl in range(1, TRACEROUTE_MAX_TTL+1):
-        util.print_result([], ttl)
-    return []
+        sendsock.set_ttl(ttl)
+        routers_at_this_ttl: set[str] = set()
+        for _ in range(PROBE_ATTEMPT_COUNT):
+            sendsock.sendto(b"ya rab 3ady elkreb da 3la khair", (ip, TRACEROUTE_PORT_NUMBER))
+            if not recvsock.recv_select():
+                continue
+            buffer, (router_ip, _) = recvsock.recvfrom()
+            ip_hdr = IPv4(buffer)
+            icmp = ICMP(buffer[ip_hdr.header_len:])  # header_len is now in bytes
+            routers_at_this_ttl.add(router_ip)
+            if icmp.type == 3 and icmp.code == 3:  # Port Unreachable = destination reached
+                routers.append(list(routers_at_this_ttl))
+                util.print_result(list(routers_at_this_ttl), ttl)
+                return routers
+        routers.append(list(routers_at_this_ttl))
+        util.print_result(list(routers_at_this_ttl), ttl)
+
+    return routers
 
 
 if __name__ == '__main__':
