@@ -137,9 +137,10 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
             buffer, (router_ip, _) = recvsock.recvfrom()
             ip_hdr = IPv4(buffer)
             icmp = ICMP(buffer[ip_hdr.header_len:])  # header_len is now in bytes
-            if icmp.type == 11:
+            # B2, B3
+            if icmp.type == 11 and icmp.code == 0: # type: time exceeded, code: TTL exceeded in transit
                 routers_at_this_ttl.add(router_ip)
-            elif icmp.type == 3 and icmp.code == 3:  # Port Unreachable = destination reached
+            elif icmp.type == 3 and icmp.code == 3:  # type: destination unreachable , code: port unreachable
                 routers.append([ip])
                 util.print_result([ip], ttl)
                 return routers
