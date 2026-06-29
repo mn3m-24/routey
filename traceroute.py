@@ -136,6 +136,9 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
                 continue
             buffer, (router_ip, _) = recvsock.recvfrom()
             ip_hdr = IPv4(buffer)
+            # B4: ignore packets that are not ICMP
+            if ip_hdr.proto != 1:
+                continue
             icmp = ICMP(buffer[ip_hdr.header_len:])  # header_len is now in bytes
             # B2, B3
             if icmp.type == 11 and icmp.code == 0: # type: time exceeded, code: TTL exceeded in transit
