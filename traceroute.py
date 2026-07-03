@@ -135,14 +135,14 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
     routers: list[list[str]] = []
     for ttl in range(1, TRACEROUTE_MAX_TTL+1):
         sendsock.set_ttl(ttl)
-        routers_at_this_ttl: set[str] = set()
-        udp_expected_ports = {TRACEROUTE_PORT_NUMBER + (ttl - 1) * PROBE_ATTEMPT_COUNT + i for i in range(PROBE_ATTEMPT_COUNT)}
+        udp_expected_ports = set()
         udp_received_ports = set()
         for i in range(PROBE_ATTEMPT_COUNT):
             port = TRACEROUTE_PORT_NUMBER + (ttl - 1) * PROBE_ATTEMPT_COUNT + i
+            udp_expected_ports.add(port)
             sendsock.sendto(b"ya rab 3ady elkreb da 3la khair", (ip, port))
-            if not recvsock.recv_select():
-                continue
+        routers_at_this_ttl: set[str] = set()
+        while len(udp_received_ports) < PROBE_ATTEMPT_COUNT and recvsock.recv_select():
             buffer, (router_ip, _) = recvsock.recvfrom()
             ip_hdr: IPv4 | None = None
             try: # B5,B6
