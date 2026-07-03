@@ -130,8 +130,11 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
     for ttl in range(1, TRACEROUTE_MAX_TTL+1):
         sendsock.set_ttl(ttl)
         routers_at_this_ttl: set[str] = set()
-        for _ in range(PROBE_ATTEMPT_COUNT):
-            sendsock.sendto(b"ya rab 3ady elkreb da 3la khair", (ip, TRACEROUTE_PORT_NUMBER))
+        udp_expected_ports = {TRACEROUTE_PORT_NUMBER + (ttl - 1) * PROBE_ATTEMPT_COUNT + i for i in range(PROBE_ATTEMPT_COUNT)}
+        udp_received_ports = set()
+        for i in range(PROBE_ATTEMPT_COUNT):
+            port = TRACEROUTE_PORT_NUMBER + (ttl - 1) * PROBE_ATTEMPT_COUNT + i
+            sendsock.sendto(b"ya rab 3ady elkreb da 3la khair", (ip, port))
             if not recvsock.recv_select():
                 continue
             buffer, (router_ip, _) = recvsock.recvfrom()
@@ -140,9 +143,15 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
             if ip_hdr.proto != 1:
                 continue
             icmp = ICMP(buffer[ip_hdr.header_len:])  # header_len is now in bytes
+            orig_ip = IPv4(buffer[ip_hdr.header_len + 8:])
+            orig_udp = UDP(buffer[ip_hdr.header_len + 8 + orig_ip.header_len:])
+            # B16, B13, B14
+            if orig_ip.dst != ip or orig_udp.dst_port in udp_received_ports or orig_udp.dst_port not in udp_expected_ports:
+                continue
             # B2, B3
             if icmp.type == 11 and icmp.code == 0: # type: time exceeded, code: TTL exceeded in transit
                 routers_at_this_ttl.add(router_ip)
+                udp_received_ports.add(orig_udp.dst_port)
             elif icmp.type == 3 and icmp.code == 3:  # type: destination unreachable , code: port unreachable
                 routers.append([ip])
                 util.print_result([ip], ttl)
