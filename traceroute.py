@@ -110,10 +110,6 @@ class UDP:
         return f"UDP (src_port {self.src_port}, dst_port {self.dst_port}, " + \
             f"len {self.len}, cksum 0x{self.cksum:x})"
 
-def send_probes(sendsock: util.Socket, payload: bytes, ip: str, udp_expected_ports: set[int]) -> None:
-    for port in udp_expected_ports:
-        sendsock.sendto(payload, (ip, port))
-
 def parse_icmp_response(buffer: bytes, target_ip: str, udp_expected_ports, udp_received_ports) \
         -> tuple[bool, int] | None:
     # Parses the response and return None if it is not valid and should be dropped
@@ -140,6 +136,10 @@ def parse_icmp_response(buffer: bytes, target_ip: str, udp_expected_ports, udp_r
     elif icmp_hdr.type == 3 and icmp_hdr.code == 3:  # type: destination unreachable , code: port unreachable
         return (True, orig_udp_hdr.dst_port)
 
+def send_probes(sendsock: util.Socket, payload: bytes, ip: str, udp_expected_ports: set[int]) -> None:
+    for port in udp_expected_ports:
+        sendsock.sendto(payload, (ip, port))
+
 def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
         -> list[list[str]]:
     """ Run traceroute and returns the discovered path.
@@ -163,12 +163,12 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
     routers: list[list[str]] = []
     for ttl in range(1, TRACEROUTE_MAX_TTL+1):
         sendsock.set_ttl(ttl)
-        udp_expected_ports = set()
+        udp_expected_ports = {TRACEROUTE_PORT_NUMBER + (ttl - 1) * PROBE_ATTEMPT_COUNT + i for i in range(PROBE_ATTEMPT_COUNT)}
         udp_received_ports = set()
-        for i in range(PROBE_ATTEMPT_COUNT):
-            port = TRACEROUTE_PORT_NUMBER + (ttl - 1) * PROBE_ATTEMPT_COUNT + i
-            udp_expected_ports.add(port)
-            sendsock.sendto(b"ya rab 3ady elkreb da 3la khair", (ip, port))
+
+        payload = b"ya rab 3ady elkreb da 3la khair"
+        send_probes(sendsock, payload, ip, udp_expected_ports)
+
         routers_at_this_ttl: set[str] = set()
         while len(udp_received_ports) < PROBE_ATTEMPT_COUNT and recvsock.recv_select():
             buffer, (router_ip, _) = recvsock.recvfrom()
