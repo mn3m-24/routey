@@ -110,7 +110,35 @@ class UDP:
         return f"UDP (src_port {self.src_port}, dst_port {self.dst_port}, " + \
             f"len {self.len}, cksum 0x{self.cksum:x})"
 
-# TODO feel free to add helper functions if you'd like
+def send_probes(sendsock: util.Socket, payload: bytes, ip: str, udp_expected_ports: set[int]) -> None:
+    for port in udp_expected_ports:
+        sendsock.sendto(payload, (ip, port))
+
+def parse_icmp_response(buffer: bytes, target_ip: str, udp_expected_ports, udp_received_ports) \
+        -> tuple[bool, int] | None:
+    # Parses the response and return None if it is not valid and should be dropped
+    # Othewise returns (is_destination, udp_dst_port)
+    try:
+        ip_hdr = IPv4(buffer)
+        icmp_hdr = ICMP(buffer[ip_hdr.header_len:])  # header_len is now in bytes
+        orig_ip_hdr = IPv4(buffer[ip_hdr.header_len + 8:])
+        orig_udp_hdr = UDP(buffer[ip_hdr.header_len + 8 + orig_ip_hdr.header_len:])
+    except Exception:
+        return None
+    # B4: ignore packets that are not ICMP
+    if ip_hdr.proto != 1:
+        return None
+    # B16
+    if orig_ip_hdr.dst != target_ip:
+        return None
+    # B13, B14
+    if orig_udp_hdr.dst_port in udp_received_ports or orig_udp_hdr.dst_port not in udp_expected_ports:
+        return None
+    # B2, B3
+    if icmp_hdr.type == 11 and icmp_hdr.code == 0: # type: time exceeded, code: TTL exceeded in transit
+        return (False, orig_udp_hdr.dst_port)
+    elif icmp_hdr.type == 3 and icmp_hdr.code == 3:  # type: destination unreachable , code: port unreachable
+        return (True, orig_udp_hdr.dst_port)
 
 def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
         -> list[list[str]]:
@@ -144,32 +172,14 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
         routers_at_this_ttl: set[str] = set()
         while len(udp_received_ports) < PROBE_ATTEMPT_COUNT and recvsock.recv_select():
             buffer, (router_ip, _) = recvsock.recvfrom()
-            ip_hdr: IPv4 | None = None
-            try: # B5,B6
-                ip_hdr = IPv4(buffer)
-            except Exception:
+            response = parse_icmp_response(buffer, ip, udp_expected_ports, udp_received_ports)
+            if not response: # Invalid response
                 continue
-            # B4: ignore packets that are not ICMP
-            if ip_hdr.proto != 1:
-                continue
-            icmp: ICMP | None = None
-            orig_ip: IPv4 | None = None
-            orig_udp: UDP | None = None
-            try: # B5,B6
-                icmp = ICMP(buffer[ip_hdr.header_len:])  # header_len is now in bytes
-                orig_ip = IPv4(buffer[ip_hdr.header_len + 8:])
-                orig_udp = UDP(buffer[ip_hdr.header_len + 8 + orig_ip.header_len:])
-            except Exception:
-                continue
-
-            # B16, B13, B14
-            if orig_ip.dst != ip or orig_udp.dst_port in udp_received_ports or orig_udp.dst_port not in udp_expected_ports:
-                continue
-            # B2, B3
-            if icmp.type == 11 and icmp.code == 0: # type: time exceeded, code: TTL exceeded in transit
-                udp_received_ports.add(orig_udp.dst_port)
+            is_destination, udp_dst_port = response
+            if not is_destination:
+                udp_received_ports.add(udp_dst_port)
                 routers_at_this_ttl.add(router_ip)
-            elif icmp.type == 3 and icmp.code == 3:  # type: destination unreachable , code: port unreachable
+            else:
                 routers.append([ip])
                 util.print_result([ip], ttl)
                 return routers
