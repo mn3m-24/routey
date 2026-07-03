@@ -38,6 +38,8 @@ class IPv4:
     dst: str
 
     def __init__(self, buffer: bytes):
+        if (len(buffer) < 20):
+            raise Exception("Invalid IPv4 header")
         version_ihl = buffer[0]
         self.version = version_ihl >> 4 # right shifting 4 bits
         self.header_len = (version_ihl & 0x0F) * 4  # IHL field is in 4-byte words; spec requires bytes
@@ -75,6 +77,8 @@ class ICMP:
     cksum: int
 
     def __init__(self, buffer: bytes):
+        if (len(buffer) < 8):
+            raise Exception("Invalid ICMP header")
         self.type, self.code = buffer[0:2]
         self.cksum = int.from_bytes(buffer[2:4], "big")
 
@@ -95,6 +99,8 @@ class UDP:
     cksum: int
 
     def __init__(self, buffer: bytes):
+        if (len(buffer) < 8):
+            raise Exception("Invalid UDP header")
         self.src_port = int.from_bytes(buffer[0:2], "big")
         self.dst_port = int.from_bytes(buffer[2:4], "big")
         self.len = int.from_bytes(buffer[4:6], "big")
@@ -138,20 +144,31 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
             if not recvsock.recv_select():
                 continue
             buffer, (router_ip, _) = recvsock.recvfrom()
-            ip_hdr = IPv4(buffer)
+            ip_hdr: IPv4 | None = None
+            try: # B5,B6
+                ip_hdr = IPv4(buffer)
+            except Exception:
+                continue
             # B4: ignore packets that are not ICMP
             if ip_hdr.proto != 1:
                 continue
-            icmp = ICMP(buffer[ip_hdr.header_len:])  # header_len is now in bytes
-            orig_ip = IPv4(buffer[ip_hdr.header_len + 8:])
-            orig_udp = UDP(buffer[ip_hdr.header_len + 8 + orig_ip.header_len:])
+            icmp: ICMP | None = None
+            orig_ip: IPv4 | None = None
+            orig_udp: UDP | None = None
+            try: # B5,B6
+                icmp = ICMP(buffer[ip_hdr.header_len:])  # header_len is now in bytes
+                orig_ip = IPv4(buffer[ip_hdr.header_len + 8:])
+                orig_udp = UDP(buffer[ip_hdr.header_len + 8 + orig_ip.header_len:])
+            except Exception:
+                continue
+
             # B16, B13, B14
             if orig_ip.dst != ip or orig_udp.dst_port in udp_received_ports or orig_udp.dst_port not in udp_expected_ports:
                 continue
             # B2, B3
             if icmp.type == 11 and icmp.code == 0: # type: time exceeded, code: TTL exceeded in transit
-                routers_at_this_ttl.add(router_ip)
                 udp_received_ports.add(orig_udp.dst_port)
+                routers_at_this_ttl.add(router_ip)
             elif icmp.type == 3 and icmp.code == 3:  # type: destination unreachable , code: port unreachable
                 routers.append([ip])
                 util.print_result([ip], ttl)
